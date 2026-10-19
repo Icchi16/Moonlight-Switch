@@ -504,7 +504,11 @@ int gs_start_app(PSERVER_DATA server, STREAM_CONFIGURATION* config, int appId,
 
     Data data;
 
-    if (server->currentGame == 0) {
+    // Resume sends the same parameters as launch, like moonlight-qt. Hosts
+    // that rebuild the display on resume (Vibeshine/Apollo virtual displays)
+    // otherwise have no mode and fall back to an unrelated resolution.
+    {
+        const char* verb = server->currentGame == 0 ? "launch" : "resume";
         int channelCounnt =
             config->audioConfiguration == AUDIO_CONFIGURATION_STEREO
                 ? CHANNEL_COUNT_STEREO
@@ -515,18 +519,14 @@ int gs_start_app(PSERVER_DATA server, STREAM_CONFIGURATION* config, int appId,
         int fps = sops && config->fps > 60 ? 60 : config->fps;
         snprintf(url, sizeof(url),
                  "https://%s:%u/"
-                 "launch?uniqueid=%s&appid=%d&mode=%dx%dx%d&additionalStates=1&"
+                 "%s?uniqueid=%s&appid=%d&mode=%dx%dx%d&additionalStates=1&"
                  "sops=%d&rikey=%s&rikeyid=%d&localAudioPlayMode=%d&"
                  "surroundAudioInfo=%d&remoteControllersBitmap=%d&gcmap=%d%s",
-                 server->serverInfo.address, server->httpsPort, unique_id.c_str(), appId,
+                 server->serverInfo.address, server->httpsPort, verb,
+                 unique_id.c_str(), appId,
                  config->width, config->height, fps, sops, rand.hex().bytes(),
                  rikeyid, localaudio, (mask << 16) + channelCounnt,
                  gamepad_mask, gamepad_mask, LiGetLaunchUrlQueryParameters());
-    } else {
-        snprintf(url, sizeof(url),
-                 "https://%s:%u/resume?uniqueid=%s&rikey=%s&rikeyid=%d%s",
-                 server->serverInfo.address, server->httpsPort, unique_id.c_str(),
-                 rand.hex().bytes(), rikeyid, LiGetLaunchUrlQueryParameters());
     }
 
     if ((ret = http_request(url, &data, HTTPRequestTimeoutLong)) == GS_OK) {

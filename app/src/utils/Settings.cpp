@@ -1,6 +1,7 @@
 #include "Settings.hpp"
 #include <jansson.h>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <iomanip>
 #include <climits>
@@ -275,6 +276,27 @@ void Settings::load() {
                 }
             }
 
+            if (json_t* gyro = json_object_get(settings, "gyro_enabled")) {
+                if (json_is_boolean(gyro)) set_gyro_enabled(json_is_true(gyro));
+            }
+            if (json_t* right = json_object_get(settings, "joycon_gyro_right")) {
+                if (json_is_boolean(right)) set_joycon_gyro_right(json_is_true(right));
+            }
+            if (json_t* compatibility = json_object_get(settings, "vhf_pro_compatibility")) {
+                if (json_is_boolean(compatibility)) set_vhf_pro_compatibility(json_is_true(compatibility));
+            }
+            if (json_t* gain = json_object_get(settings, "gyro_gain_percent")) {
+                if (json_is_integer(gain))
+                    set_gyro_gain(std::clamp((float)json_integer_value(gain) / 100.f, 0.5f, 3.0f));
+            }
+            if (json_t* drift = json_object_get(settings, "gyro_zero_drift")) {
+                if (json_is_integer(drift))
+                    set_gyro_zero_drift(std::clamp((int)json_integer_value(drift), 0, 2));
+            }
+            if (json_t* pointer = json_object_get(settings, "joycon_pointer_mode")) {
+                if (json_is_boolean(pointer)) set_joycon_pointer_mode(json_is_true(pointer));
+            }
+
             if (json_t* enable_dithering = json_object_get(settings, "enable_dithering")) {
                 m_enable_dithering = json_typeof(enable_dithering) == JSON_TRUE;
             }
@@ -338,6 +360,22 @@ void Settings::load() {
                 m_swap_joycon_stick_to_dpad = json_typeof(swap_joycon_stick_to_dpad) == JSON_TRUE;
             }
 
+            if (json_t* end_stream_on_home = json_object_get(settings, "end_stream_on_home")) {
+                m_end_stream_on_home = json_typeof(end_stream_on_home) == JSON_TRUE;
+            }
+
+            if (json_t* fast_controller_polling = json_object_get(settings, "fast_controller_polling")) {
+                m_fast_controller_polling = json_typeof(fast_controller_polling) == JSON_TRUE;
+            }
+
+            if (json_t* lowest_latency_pacing = json_object_get(settings, "lowest_latency_pacing")) {
+                m_lowest_latency_pacing = json_typeof(lowest_latency_pacing) == JSON_TRUE;
+            }
+
+            if (json_t* low_latency_audio = json_object_get(settings, "low_latency_audio")) {
+                m_low_latency_audio = json_typeof(low_latency_audio) == JSON_TRUE;
+            }
+
             if (json_t* touchscreen_mouse_mode = json_object_get(settings, "touchscreen_mouse_mode")) {
                 m_touchscreen_mouse_mode = json_typeof(touchscreen_mouse_mode) == JSON_TRUE;
             }
@@ -388,6 +426,34 @@ void Settings::load() {
                 if (json_typeof(deadzone_stick_right) == JSON_INTEGER) {
                     m_deadzone_stick_right = (float)json_integer_value(deadzone_stick_right) / 100.f;
                 }
+            }
+
+            if (json_t* anti_left = json_object_get(settings, "anti_deadzone_stick_left")) {
+                if (json_typeof(anti_left) == JSON_INTEGER) {
+                    m_anti_deadzone_stick_left = std::clamp((float)json_integer_value(anti_left) / 100.f, 0.f, 0.5f);
+                }
+            }
+
+            if (json_t* anti_right = json_object_get(settings, "anti_deadzone_stick_right")) {
+                if (json_typeof(anti_right) == JSON_INTEGER) {
+                    m_anti_deadzone_stick_right = std::clamp((float)json_integer_value(anti_right) / 100.f, 0.f, 0.5f);
+                }
+            }
+
+            auto loadPercent = [settings](const char* key, float& target, float lo, float hi) {
+                if (json_t* value = json_object_get(settings, key)) {
+                    if (json_typeof(value) == JSON_INTEGER) {
+                        target = std::clamp((float)json_integer_value(value) / 100.f, lo, hi);
+                    }
+                }
+            };
+            loadPercent("stick_curve_left", m_stick_curve_left, 0.f, 1.f);
+            loadPercent("stick_curve_right", m_stick_curve_right, 0.f, 1.f);
+            loadPercent("stick_outer_limit_left", m_stick_outer_limit_left, 0.7f, 1.f);
+            loadPercent("stick_outer_limit_right", m_stick_outer_limit_right, 0.7f, 1.f);
+
+            if (json_t* tuning_joycon_only = json_object_get(settings, "stick_tuning_joycon_only")) {
+                m_stick_tuning_joycon_only = json_typeof(tuning_joycon_only) == JSON_TRUE;
             }
             
             if (json_t* rumble_force = json_object_get(settings, "rumble_force")) {
@@ -536,6 +602,12 @@ void Settings::save() {
             json_object_set_new(settings, "fps", json_integer(m_fps));
             json_object_set_new(settings, "video_codec", json_integer(m_video_codec));
             json_object_set_new(settings, "audio_backend", json_integer(m_audio_backend));
+            json_object_set_new(settings, "gyro_enabled", m_gyro_enabled ? json_true() : json_false());
+            json_object_set_new(settings, "joycon_gyro_right", m_joycon_gyro_right ? json_true() : json_false());
+            json_object_set_new(settings, "vhf_pro_compatibility", m_vhf_pro_compatibility ? json_true() : json_false());
+            json_object_set_new(settings, "gyro_gain_percent", json_integer(std::lround(m_gyro_gain * 100.f)));
+            json_object_set_new(settings, "gyro_zero_drift", json_integer(m_gyro_zero_drift));
+            json_object_set_new(settings, "joycon_pointer_mode", m_joycon_pointer_mode ? json_true() : json_false());
             json_object_set_new(settings, "bitrate", json_integer(m_bitrate));
             json_object_set_new(settings, "decoder_threads", json_integer(m_decoder_threads));
             json_object_set_new(settings, "frames_queue_size", json_integer(m_frames_queue_size));
@@ -553,6 +625,10 @@ void Settings::save() {
             json_object_set_new(settings, "write_log", m_write_log ? json_true() : json_false());
             json_object_set_new(settings, "swap_ui_keys", m_swap_ui_keys ? json_true() : json_false());
             json_object_set_new(settings, "swap_joycon_stick_to_dpad", m_swap_joycon_stick_to_dpad ? json_true() : json_false());
+            json_object_set_new(settings, "end_stream_on_home", m_end_stream_on_home ? json_true() : json_false());
+            json_object_set_new(settings, "fast_controller_polling", m_fast_controller_polling ? json_true() : json_false());
+            json_object_set_new(settings, "lowest_latency_pacing", m_lowest_latency_pacing ? json_true() : json_false());
+            json_object_set_new(settings, "low_latency_audio", m_low_latency_audio ? json_true() : json_false());
             json_object_set_new(settings, "touchscreen_mouse_mode", m_touchscreen_mouse_mode ? json_true() : json_false());
             json_object_set_new(settings, "swap_mouse_keys", m_swap_mouse_keys ? json_true() : json_false());
             json_object_set_new(settings, "swap_mouse_scroll", m_swap_mouse_scroll ? json_true() : json_false());
@@ -563,6 +639,13 @@ void Settings::save() {
             json_object_set_new(settings, "mouse_speed_multiplier", json_integer(m_mouse_speed_multiplier));
             json_object_set_new(settings, "deadzone_stick_left", json_integer(int(m_deadzone_stick_left * 100.f)));
             json_object_set_new(settings, "deadzone_stick_right", json_integer(int(m_deadzone_stick_right * 100.f)));
+            json_object_set_new(settings, "anti_deadzone_stick_left", json_integer(std::lround(m_anti_deadzone_stick_left * 100.f)));
+            json_object_set_new(settings, "anti_deadzone_stick_right", json_integer(std::lround(m_anti_deadzone_stick_right * 100.f)));
+            json_object_set_new(settings, "stick_curve_left", json_integer(std::lround(m_stick_curve_left * 100.f)));
+            json_object_set_new(settings, "stick_curve_right", json_integer(std::lround(m_stick_curve_right * 100.f)));
+            json_object_set_new(settings, "stick_outer_limit_left", json_integer(std::lround(m_stick_outer_limit_left * 100.f)));
+            json_object_set_new(settings, "stick_outer_limit_right", json_integer(std::lround(m_stick_outer_limit_right * 100.f)));
+            json_object_set_new(settings, "stick_tuning_joycon_only", m_stick_tuning_joycon_only ? json_true() : json_false());
             json_object_set_new(settings, "rumble_force", json_integer(m_rumble_force));
             json_object_set_new(settings, "current_mapping_layout", json_integer(m_current_mapping_layout));
             json_object_set_new(settings, "keyboard_type", json_integer(m_keyboard_type));

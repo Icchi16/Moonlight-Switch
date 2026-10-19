@@ -77,10 +77,12 @@ int SDLAudioRenderer::init(int audio_configuration,
         have = want;
     }
 #else
-    // Latest SDL2 Switch port broke audio for lower samples
+    // Latest SDL2 Switch port broke audio for lower samples, so the small
+    // buffer is opt-in (Settings > Low-latency audio buffer, applies on the
+    // next stream). 1024 samples is ~21 ms at 48 kHz versus ~85 ms for 4096.
 #if defined(PLATFORM_SWITCH)
-    wantSamples = 4096;
-    want.samples = 4096;
+    wantSamples = Settings::instance().low_latency_audio() ? 1024 : 4096;
+    want.samples = wantSamples;
 #else
     want.samples = wantSamples;
 #endif
@@ -95,7 +97,7 @@ int SDLAudioRenderer::init(int audio_configuration,
             brls::Logger::error("We didn't get requested audio format.\n");
 
     #if defined(PLATFORM_SWITCH)
-        audioOverflowBytes = 24000;
+        audioOverflowBytes = Settings::instance().low_latency_audio() ? 12000 : 24000;
     #elif defined(PLATFORM_APPLE)
         // CoreAudio backends can batch callbacks enough that a fixed 16 KB
         // threshold is only a tiny latency window.

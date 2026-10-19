@@ -11,9 +11,11 @@
 
 #include "helper.hpp"
 #include "ingame_overlay_view.hpp"
+#include "InputManager.hpp"
 #include "streaming_input_overlay.hpp"
 #include "button_selecting_dialog.hpp"
 #include "UpscalingSupport.hpp"
+#include "GyroSettings.hpp"
 
 #include <cmath>
 #include <iomanip>
@@ -113,6 +115,8 @@ LogoutTab::LogoutTab(StreamingView* streamView) : streamView(streamView) {
 // MARK: - Options Tab
 OptionsTab::OptionsTab(StreamingView* streamView) : streamView(streamView) {
     this->inflateFromXMLRes("xml/views/ingame_overlay/options_tab.xml");
+    setupGyroSettings(gyroEnabled, joyconGyro, vhfProCompatibility, vhfProHint, gyroSource,
+                      gyroGain, gyroZeroDrift, joyconPointerMode);
 
     guideKeyButtons->setText("settings/guide_key_buttons"_i18n);
     setupButtonsSelectorCell(guideKeyButtons,
@@ -246,6 +250,9 @@ OptionsTab::OptionsTab(StreamingView* streamView) : streamView(streamView) {
     swapStickToDpad->init("settings/swap_stick_to_dpad"_i18n, Settings::instance().swap_joycon_stick_to_dpad(),
                           [](bool value) { Settings::instance().set_swap_joycon_stick_to_dpad(value); });
 
+    lowestLatencyPacing->init("settings/lowest_latency_pacing"_i18n, Settings::instance().lowest_latency_pacing(),
+                              [](bool value) { Settings::instance().set_lowest_latency_pacing(value); });
+
     onscreenLogButton->init("streaming/show_logs"_i18n,
                             Settings::instance().write_log(), [](bool value) {
                                 Settings::instance().set_write_log(value);
@@ -254,7 +261,15 @@ OptionsTab::OptionsTab(StreamingView* streamView) : streamView(streamView) {
 
     debugButton->init(
         "streaming/debug_info"_i18n, streamView->draw_stats,
-        [streamView](bool value) { streamView->draw_stats = value; });
+        [streamView](bool value) {
+            streamView->draw_stats = value;
+            if (value) {
+                MoonlightInputManager::instance().resetStickPeaks();
+#ifdef __SWITCH__
+                moonvibe::SwitchMotion::instance().resetMeasurement();
+#endif
+            }
+        });
 
 #ifdef SUPPORT_UPSCALING
     if (!isVideoUpscalingSupported()) {
@@ -334,6 +349,18 @@ OptionsTab::OptionsTab(StreamingView* streamView) : streamView(streamView) {
 }
 
 OptionsTab::~OptionsTab() { Settings::instance().save(); }
+
+void OptionsTab::draw(NVGcontext* vg, float x, float y, float width, float height,
+                      brls::Style style, brls::FrameContext* ctx) {
+#ifdef __SWITCH__
+    const auto text = gyroSourceText();
+    if (displayedGyroSource != text) {
+        displayedGyroSource = text;
+        gyroSource->setDetailText(text);
+    }
+#endif
+    brls::Box::draw(vg, x, y, width, height, style, ctx);
+}
 
 std::string
 OptionsTab::getTextFromButtons(std::vector<ControllerButton> buttons) {

@@ -15,6 +15,8 @@ class SettingsTab : public brls::Box {
   public:
     SettingsTab();
     ~SettingsTab();
+    void draw(NVGcontext* vg, float x, float y, float width, float height,
+              brls::Style style, brls::FrameContext* ctx) override;
 
     BRLS_BIND(brls::SelectorCell, resolution, "resolution");
     BRLS_BIND(brls::SelectorCell, resolutionScale, "resolution_scale");
@@ -37,9 +39,28 @@ class SettingsTab : public brls::Box {
     BRLS_BIND(brls::DetailCell, swapGame, "swap_game");
     BRLS_BIND(brls::DetailCell, deadzoneStickLeft, "dead_zone_stick_left");
     BRLS_BIND(brls::DetailCell, deadzoneStickRight, "dead_zone_stick_right");
+    BRLS_BIND(brls::DetailCell, antiDeadzoneStickLeft, "anti_dead_zone_stick_left");
+    BRLS_BIND(brls::DetailCell, antiDeadzoneStickRight, "anti_dead_zone_stick_right");
+    BRLS_BIND(brls::DetailCell, stickCurveLeft, "stick_curve_left");
+    BRLS_BIND(brls::DetailCell, stickCurveRight, "stick_curve_right");
+    BRLS_BIND(brls::DetailCell, stickOuterLimitLeft, "stick_outer_limit_left");
+    BRLS_BIND(brls::DetailCell, stickOuterLimitRight, "stick_outer_limit_right");
+    BRLS_BIND(brls::BooleanCell, stickTuningJoyconOnly, "stick_tuning_joycon_only");
     BRLS_BIND(brls::Header, rumbleForceHeader, "rumble_slider_header");
     BRLS_BIND(brls::Slider, rumbleForceSlider, "rumble_slider");
     BRLS_BIND(brls::BooleanCell, swapStickToDpad, "swap_stick_to_dpad");
+    BRLS_BIND(brls::BooleanCell, endStreamOnHome, "end_stream_on_home");
+    BRLS_BIND(brls::BooleanCell, fastControllerPolling, "fast_controller_polling");
+    BRLS_BIND(brls::BooleanCell, lowestLatencyPacing, "lowest_latency_pacing");
+    BRLS_BIND(brls::BooleanCell, lowLatencyAudio, "low_latency_audio");
+    BRLS_BIND(brls::BooleanCell, gyroEnabled, "gyro_enabled");
+    BRLS_BIND(brls::SelectorCell, joyconGyro, "joycon_gyro");
+    BRLS_BIND(brls::BooleanCell, joyconPointerMode, "joycon_pointer_mode");
+    BRLS_BIND(brls::BooleanCell, vhfProCompatibility, "vhf_pro_compatibility");
+    BRLS_BIND(brls::Label, vhfProHint, "vhf_pro_hint");
+    BRLS_BIND(brls::DetailCell, gyroSource, "gyro_source");
+    BRLS_BIND(brls::SelectorCell, gyroGain, "gyro_gain");
+    BRLS_BIND(brls::SelectorCell, gyroZeroDrift, "gyro_zero_drift");
     BRLS_BIND(brls::DetailCell, guideKeyButtons, "guide_key_buttons");
     BRLS_BIND(brls::SelectorCell, guideBySystemButton, "guide_by_system_button");
     BRLS_BIND(brls::SelectorCell, overlayTime, "overlay_time");
@@ -60,6 +81,7 @@ class SettingsTab : public brls::Box {
     static brls::View* create();
 
   private:
+    std::string displayedGyroSource;
     void setupButtonsSelectorCell(brls::DetailCell* cell,
                                   std::vector<brls::ControllerButton> buttons);
     std::string getTextFromButtons(std::vector<brls::ControllerButton> buttons);

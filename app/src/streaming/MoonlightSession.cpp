@@ -3,6 +3,7 @@
 #include "GameStreamClient.hpp"
 #include "InputManager.hpp"
 #include "Settings.hpp"
+#include "switch/SwitchMotion.hpp"
 #include "borealis.hpp"
 #include <string.h>
 #include <tracy/Tracy.hpp>
@@ -40,6 +41,9 @@ MoonlightSession::MoonlightSession(const std::string& address, int app_id) {
 }
 
 MoonlightSession::~MoonlightSession() {
+#ifdef __SWITCH__
+    moonvibe::SwitchMotion::instance().stop();
+#endif
     ZoneScoped;
     ZoneTextF("} this = %p", this);
     if (m_video_decoder) {
@@ -91,9 +95,16 @@ void MoonlightSession::connection_started() {
         return;
 
     m_active_session->m_status = Status::Active;
+#ifdef __SWITCH__
+    brls::Logger::info("Motion: host feature flags {:#x}", LiGetHostFeatureFlags());
+    moonvibe::SwitchMotion::instance().start();
+#endif
 }
 
 void MoonlightSession::connection_terminated(int error_code) {
+#ifdef __SWITCH__
+    moonvibe::SwitchMotion::instance().stop();
+#endif
     ZoneScoped;
     brls::Logger::info("MoonlightSession: Connection terminated with code: {}", error_code);
 
@@ -152,6 +163,12 @@ void MoonlightSession::connection_set_hdr_mode(bool use_hdr) {
     if (m_active_session) {
         m_active_session->m_use_hdr = use_hdr;
     }
+}
+
+void MoonlightSession::connection_motion_state(uint16_t slot, uint8_t type, uint16_t rate) {
+#ifdef __SWITCH__
+    moonvibe::SwitchMotion::instance().request(slot, type, rate);
+#endif
 }
 
 // MARK: Video decoder callbacks
@@ -240,6 +257,14 @@ void MoonlightSession::start(ServerCallback<bool> callback, bool is_sunshine) {
     ZoneScoped;
     m_is_sunshine = is_sunshine;
     m_stop_requested = false;
+    MoonlightInputManager::instance().resetSession();
+#ifdef __SWITCH__
+    moonvibe::SwitchMotion::instance().prepareSession(Settings::instance().gyro_enabled(),
+        Settings::instance().joycon_gyro_right(), Settings::instance().vhf_pro_compatibility());
+    moonvibe::SwitchMotion::instance().setGyroGain(Settings::instance().gyro_gain());
+    moonvibe::SwitchMotion::instance().setZeroDriftMode(Settings::instance().gyro_zero_drift());
+    moonvibe::SwitchMotion::instance().setPointerMode(Settings::instance().joycon_pointer_mode());
+#endif
 
     // technicall a change in behavior if already active, but i'm unconvinced that can
     // happen or the old behavior is correct
@@ -312,6 +337,9 @@ void MoonlightSession::start(ServerCallback<bool> callback, bool is_sunshine) {
     m_connection_callbacks.rumbleTriggers = connection_rumble_triggers;
     m_connection_callbacks.connectionStatusUpdate = connection_status_update;
     m_connection_callbacks.setHdrMode = connection_set_hdr_mode;
+#ifdef __SWITCH__
+    m_connection_callbacks.setMotionEventState = connection_motion_state;
+#endif
 
     LiInitializeVideoCallbacks(&m_video_callbacks);
     m_video_callbacks.setup = video_decoder_setup;
@@ -351,6 +379,9 @@ void MoonlightSession::start(ServerCallback<bool> callback, bool is_sunshine) {
                         &m_video_callbacks, &m_audio_callbacks, NULL, 0, NULL, 0);
 
                     if (result != 0) {
+#ifdef __SWITCH__
+                        moonvibe::SwitchMotion::instance().stop();
+#endif
                         LiStopConnection();
                         callback(
                             GSResult<bool>::failure("error/stream_start"_i18n));
@@ -378,6 +409,9 @@ void MoonlightSession::stop(int terminate_app) {
         GameStreamClient::instance().quit(m_address, [](auto _) {});
     }
 
+#ifdef __SWITCH__
+    moonvibe::SwitchMotion::instance().stop();
+#endif
     LiStopConnection();
 }
 
@@ -388,6 +422,9 @@ void MoonlightSession::scheduleRestart() {
 }
 
 void MoonlightSession::performRestart() {
+#ifdef __SWITCH__
+    moonvibe::SwitchMotion::instance().stop();
+#endif
     LiStopConnection();
 
     m_video_renderer->invalidateHardwareResources();

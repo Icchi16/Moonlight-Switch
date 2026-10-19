@@ -6,6 +6,7 @@
 #include "InputManager.hpp"
 #include "Limelight.h"
 #include "Settings.hpp"
+#include "switch/SwitchMotion.hpp"
 #include <borealis.hpp>
 #include <streaming_view.hpp>
 #include <algorithm>
@@ -25,15 +26,54 @@ float applyStickScrollDeadzone(float axis, float configuredDeadzone) {
     float deadzone = std::fmax(STICK_SCROLL_DEADZONE, configuredDeadzone);
     return std::fabs(axis) < deadzone ? 0.f : axis;
 }
+
+// Scaled radial deadzone: inside the deadzone the stick is centred, outside it
+// the remaining travel is stretched back to 0..1 so the first movement past
+// the edge is small rather than a jump to the deadzone value. Also clamps the
+// magnitude to 1 so diagonals cannot overflow the 16-bit axis.
+//
+// antiDeadzone raises the output floor: any movement past the deadzone maps to
+// antiDeadzone..1 instead of 0..1, cancelling the dead zone built into the game
+// so tiny aim adjustments register. Direction is preserved (radial).
+//
+// outerLimit is the travel that counts as fully pushed: Joy-Con sticks often
+// top out below 1.0, so travel is stretched over deadzone..outerLimit.
+// curve (0..1) bends the response with an exponent of 1 + 2*curve, so the
+// stick is gentle near the centre and ramps up towards the rim.
+// Order: dead zone -> outer limit -> curve -> anti-dead-zone floor.
+struct StickTuning {
+    float deadzone = 0.f;
+    float antiDeadzone = 0.f;
+    float curve = 0.f;
+    float outerLimit = 1.f;
+};
+
+void applyStickResponse(float& x, float& y, StickTuning t) {
+    const float magnitude = std::sqrt(x * x + y * y);
+    if (magnitude <= 0.f)
+        return;
+    float deadzone = std::clamp(t.deadzone, 0.f, 0.95f);
+    const float antiDeadzone = std::clamp(t.antiDeadzone, 0.f, 0.5f);
+    // Sensor noise around the centre would otherwise jump straight to the
+    // anti-dead-zone floor and make the camera drift.
+    if (antiDeadzone > 0.f)
+        deadzone = std::fmax(deadzone, 0.03f);
+    if (magnitude <= deadzone) {
+        x = 0;
+        y = 0;
+        return;
+    }
+    const float outer = std::fmax(std::clamp(t.outerLimit, 0.5f, 1.f), deadzone + 0.05f);
+    float scaled = std::fmin((magnitude - deadzone) / (outer - deadzone), 1.f);
+    const float curve = std::clamp(t.curve, 0.f, 1.f);
+    if (curve > 0.f)
+        scaled = std::pow(scaled, 1.f + 2.f * curve);
+    scaled = antiDeadzone + scaled * (1.f - antiDeadzone);
+    x = x / magnitude * scaled;
+    y = y / magnitude * scaled;
+}
 }
 
-float fsqrt_(float f) {
-    int i = *(int *)&f;
-    i = (i >> 1) + 0x1fbb67ae;
-    float f1 = *(float *)&i;
-    return 0.5F * (f1 + f / f1);
-
-}
 
 MoonlightInputManager::MoonlightInputManager() {
     auto inputManager = brls::Application::getPlatform()->getInputManager();
@@ -75,6 +115,7 @@ MoonlightInputManager::MoonlightInputManager() {
                                 modifiers);
         });
 
+#ifndef __SWITCH__
     inputManager
         ->getControllerSensorStateChanged()
         ->subscribe([this](brls::SensorEvent event) {
@@ -93,6 +134,22 @@ MoonlightInputManager::MoonlightInputManager() {
                     break;
             }
         });
+#endif
+}
+
+void MoonlightInputManager::setInputEnabled(bool enabled) {
+    inputEnabled = enabled;
+#ifdef __SWITCH__
+    moonvibe::SwitchMotion::instance().pause(!enabled);
+#endif
+}
+
+void MoonlightInputManager::resetSession() {
+    std::lock_guard<std::mutex> lock(controllerMutex);
+    announcedControllerCount = -1;
+    std::fill(std::begin(announcedControllerIdentity), std::end(announcedControllerIdentity), 0);
+    std::fill(std::begin(lastGamepadStates), std::end(lastGamepadStates), GamepadState{});
+    inputDropped = false;
 }
 
 void MoonlightInputManager::handleDesktopMouseScroll(brls::Point scroll) {
@@ -188,6 +245,7 @@ void MoonlightInputManager::sendRelativeMouseMove(brls::Point offset) {
 }
 
 void MoonlightInputManager::reloadButtonMappingLayout() {
+    std::lock_guard<std::mutex> lock(controllerMutex);
     KeyMappingLayout layout = (*Settings::instance().get_mapping_laouts())
         [Settings::instance().get_current_mapping_layout()];
     for (int i = 0; i < _BUTTON_MAX; i++) {
@@ -249,8 +307,15 @@ void MoonlightInputManager::handleRumbleTriggers(uint16_t controllerNumber,
 }
 
 void MoonlightInputManager::dropInput() {
+#ifdef __SWITCH__
+    moonvibe::SwitchMotion::instance().pause(true);
+#endif
+    // Wait for an in-flight poller send, and keep it from sending until the
+    // UI loop clears inputDropped again.
+    std::lock_guard<std::mutex> lock(controllerMutex);
     if (inputDropped)
         return;
+    inputDropped = true;
 
     desktopMouseRemainder = {0, 0};
     desktopScrollRemainder = {0, 0};
@@ -294,17 +359,23 @@ void MoonlightInputManager::dropInput() {
         LiSendKeyboardEvent(vkKey, KEY_ACTION_UP, 0);
     }
 
+    // The host now sees neutral pads; resend whatever is held on resume.
+    std::fill(std::begin(lastGamepadStates), std::end(lastGamepadStates), GamepadState{});
     inputDropped = res;
 }
 
 GamepadState MoonlightInputManager::getControllerState(int controllerNum,
-                                                       bool specialKey) {
+                                                       bool specialKey,
+                                                       bool fromPoller) {
     brls::ControllerState rawController{};
     brls::ControllerState controller{};
 
     brls::Application::setSwapHalfJoyconStickToDpad(Settings::instance().swap_joycon_stick_to_dpad());
-    brls::Application::getPlatform()->getInputManager()->updateControllerState(
-        &rawController, controllerNum);
+    if (fromPoller)
+        padReader->read(&rawController, controllerNum);
+    else
+        brls::Application::getPlatform()->getInputManager()->updateControllerState(
+            &rawController, controllerNum);
     controller = mapController(rawController);
 
     // Use axis or button if axis is not available (equals 0)
@@ -320,21 +391,35 @@ GamepadState MoonlightInputManager::getControllerState(int controllerNum,
     float rightXAxis = controller.axes[brls::RIGHT_X];
     float rightYAxis = controller.axes[brls::RIGHT_Y];
 
-    if (leftStickDeadzone > 0) {
-        float magnitude = fsqrt_(leftXAxis * leftXAxis + leftYAxis * leftYAxis);
-        if (magnitude < leftStickDeadzone) {
-            leftXAxis = 0;
-            leftYAxis = 0;
-        }
+    // Curve and outer limit are meant for the short Joy-Con sticks; keep a
+    // Pro Controller or third-party pad linear unless the user opts out.
+    bool smallSticks = true;
+#ifdef __SWITCH__
+    if (!padReader)
+        padReader = std::make_unique<moonvibe::SwitchPadReader>();
+    smallSticks = padReader->hasSmallSticks(controllerNum);
+#endif
+    const bool tune = smallSticks || !Settings::instance().stick_tuning_joycon_only();
+
+    if (controllerNum == 0) {
+        // Player 1 only: raw travel before any processing, for the debug view.
+        const float leftRaw = std::sqrt(leftXAxis * leftXAxis + leftYAxis * leftYAxis);
+        const float rightRaw = std::sqrt(rightXAxis * rightXAxis + rightYAxis * rightYAxis);
+        if (leftRaw > stickPeakLeft.load()) stickPeakLeft = leftRaw;
+        if (rightRaw > stickPeakRight.load()) stickPeakRight = rightRaw;
+        padHasSmallSticks = smallSticks;
     }
 
-    if (rightStickDeadzone > 0) {
-        float magnitude = fsqrt_(rightXAxis * rightXAxis + rightYAxis * rightYAxis);
-        if (magnitude < rightStickDeadzone) {
-            rightXAxis = 0;
-            rightYAxis = 0;
-        }
-    }
+    applyStickResponse(leftXAxis, leftYAxis,
+        {leftStickDeadzone,
+         Settings::instance().get_anti_deadzone_stick_left(),
+         tune ? Settings::instance().get_stick_curve_left() : 0.f,
+         tune ? Settings::instance().get_stick_outer_limit_left() : 1.f});
+    applyStickResponse(rightXAxis, rightYAxis,
+        {rightStickDeadzone,
+         Settings::instance().get_anti_deadzone_stick_right(),
+         tune ? Settings::instance().get_stick_curve_right() : 0.f,
+         tune ? Settings::instance().get_stick_outer_limit_right() : 1.f});
 
     GamepadState gamepadState{
         .buttonFlags = 0,
@@ -404,34 +489,38 @@ GamepadState MoonlightInputManager::getControllerState(int controllerNum,
     return gamepadState;
 }
 
-void MoonlightInputManager::handleControllers(bool specialKey) {
-    static int lastControllerCount = 0;
-
-    auto controllersCount = brls::Application::getPlatform()
-                            ->getInputManager()
-                            ->getControllersConnectedCount();
+void MoonlightInputManager::handleControllers(bool specialKey, bool fromPoller) {
+    short controllersCount = fromPoller
+        ? padReader->connectedCount()
+        : brls::Application::getPlatform()->getInputManager()->getControllersConnectedCount();
 
     if (controllersCount > GAMEPADS_MAX) {
         brls::Logger::warning("Clamping controller count from {} to {} while handling input", controllersCount, GAMEPADS_MAX);
         controllersCount = GAMEPADS_MAX;
     }
 
-    short mappedControllersCount = controllersToMap();
+    short mappedControllersCount = controllersToMap(controllersCount);
 
     for (int i = 0; i < controllersCount; i++) {
-        GamepadState gamepadState = getControllerState(i, specialKey);
-
-        if (!gamepadState.is_equal(lastGamepadStates[i])) {
+        GamepadState gamepadState = getControllerState(i, specialKey, fromPoller);
+        uint64_t identity = 1;
+        uint8_t type = LI_CTYPE_UNKNOWN;
+#ifdef __SWITCH__
+        identity = moonvibe::SwitchMotion::instance().identity(i);
+        type = LI_CTYPE_NINTENDO;
+#endif
+        const bool announce = announcedControllerCount != controllersCount ||
+                              announcedControllerIdentity[i] != identity;
+        if (announce) {
+            const int result = LiSendControllerArrivalEvent(i, mappedControllersCount, type, 0,
+                LI_CCAP_RUMBLE | LI_CCAP_ACCEL | LI_CCAP_GYRO);
+            if (!result) announcedControllerIdentity[i] = identity;
+            else Logger::warning("Controller arrival #{} failed {}", i, result);
+        }
+        // Arrival sends a neutral button packet. Resend held buttons even when
+        // their values didn't change, including reconnect and topology changes.
+        if (announce || !gamepadState.is_equal(lastGamepadStates[i])) {
             lastGamepadStates[i] = gamepadState;
-
-            if (lastControllerCount != controllersCount) {
-                lastControllerCount = controllersCount;
-                
-                for (int i = 0; i < controllersCount; i++) {
-                    Logger::debug("StreamingView: send features message for controller #{}", i);
-                    LiSendControllerArrivalEvent(i, mappedControllersCount, LI_CTYPE_UNKNOWN, 0, LI_CCAP_RUMBLE | LI_CCAP_ACCEL | LI_CCAP_GYRO);
-                }
-            }
 
             if (LiSendMultiControllerEvent(
                     i, mappedControllersCount, gamepadState.buttonFlags,
@@ -441,13 +530,26 @@ void MoonlightInputManager::handleControllers(bool specialKey) {
                 brls::Logger::info("StreamingView: error sending input data");
         }
     }
+    if (controllersCount < announcedControllerCount) {
+        for (int i = controllersCount; i < announcedControllerCount; ++i) {
+            LiSendMultiControllerEvent(i, mappedControllersCount, 0, 0, 0, 0, 0, 0, 0);
+            lastGamepadStates[i] = {};
+            announcedControllerIdentity[i] = 0;
+        }
+    }
+    announcedControllerCount = controllersCount;
 }
 
 void MoonlightInputManager::handleInput(bool ignoreTouch) {
-    inputDropped = false;
+    if (!inputEnabled) return;
+#ifdef __SWITCH__
+    moonvibe::SwitchMotion::instance().pause(false);
+#endif
     static brls::ControllerState rawController;
     static brls::ControllerState controller;
     static brls::RawMouseState mouse;
+    std::unique_lock<std::mutex> controllerLock(controllerMutex);
+    inputDropped = false;
 
     brls::Application::getPlatform()
             ->getInputManager()
@@ -462,7 +564,14 @@ void MoonlightInputManager::handleInput(bool ignoreTouch) {
     //Do not use gamepad for mouse controll assist if touchscreen mode enabled
     bool specialKey = !ignoreTouch && !Settings::instance().touchscreen_mouse_mode() && states.size() == 1;
 
-    handleControllers(specialKey);
+    if (controllerThreadRunning) {
+        // The poller thread sends gamepad state; renew its lease.
+        pollSpecialKey = specialKey;
+        lastMainPoll = std::chrono::steady_clock::now().time_since_epoch().count();
+    } else {
+        handleControllers(specialKey, false);
+    }
+    controllerLock.unlock();
 
     float stickScrolling = 0;
     if (specialKey) {
@@ -597,21 +706,64 @@ void MoonlightInputManager::handleInput(bool ignoreTouch) {
     }
 }
 
+short MoonlightInputManager::controllersToMap(int connectedCount) {
+    const int count = std::clamp<int>(connectedCount, 0, GAMEPADS_MAX);
+    return static_cast<short>((1U << count) - 1U);
+}
+
 short MoonlightInputManager::controllersToMap() {
-    switch (brls::Application::getPlatform()
+    return controllersToMap(brls::Application::getPlatform()
                 ->getInputManager()
-                ->getControllersConnectedCount()) {
-    case 0:
-        return 0x0;
-    case 1:
-        return 0x1;
-    case 2:
-        return 0x3;
-    case 3:
-        return 0x7;
-    default:
-        return 0xF;
+                ->getControllersConnectedCount());
+}
+
+void MoonlightInputManager::startControllerPoller() {
+#ifdef __SWITCH__
+    if (!Settings::instance().fast_controller_polling() || controllerThreadRunning)
+        return;
+    if (!padReader)
+        padReader = std::make_unique<moonvibe::SwitchPadReader>();
+    lastMainPoll = 0;
+    controllerThreadRunning = true;
+    controllerThread = std::thread(&MoonlightInputManager::controllerPollerLoop, this);
+    brls::Logger::info("Input: controller poller started");
+#endif
+}
+
+void MoonlightInputManager::stopControllerPoller() {
+    if (!controllerThreadRunning && !controllerThread.joinable())
+        return;
+    controllerThreadRunning = false;
+    if (controllerThread.joinable())
+        controllerThread.join();
+    brls::Logger::info("Input: controller poller stopped");
+}
+
+void MoonlightInputManager::controllerPollerLoop() {
+#ifdef __SWITCH__
+    // Same priority as the UI thread: the work is tiny but should not wait
+    // behind decoding when it wakes.
+    svcSetThreadPriority(CUR_THREAD_HANDLE, 0x20);
+
+    // HID updates Npads every few milliseconds; poll faster than the 60 Hz UI
+    // loop so a stick change reaches the host without waiting for a frame.
+    constexpr auto pollPeriod = std::chrono::microseconds(4000);
+    // The UI loop renews this lease while streaming input is allowed (not in
+    // the overlay, the HOME menu or the post-focus input lock).
+    constexpr int64_t leaseNs = 100'000'000;
+
+    while (controllerThreadRunning) {
+        {
+            std::lock_guard<std::mutex> lock(controllerMutex);
+            const int64_t now = std::chrono::steady_clock::now().time_since_epoch().count();
+            if (inputEnabled && !inputDropped && lastMainPoll != 0 &&
+                now - lastMainPoll < leaseNs) {
+                handleControllers(pollSpecialKey, true);
+            }
+        }
+        svcSleepThread(std::chrono::duration_cast<std::chrono::nanoseconds>(pollPeriod).count());
     }
+#endif
 }
 
 brls::ControllerState

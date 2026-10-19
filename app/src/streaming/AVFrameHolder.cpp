@@ -79,8 +79,9 @@ bool AVFrameQueue::push(AVFrame* item) {
         return false;
     }
 
-    const Timestamp timeEstimate = recordArrivalLocked(std::chrono::steady_clock::now());
-    queue.push_back(TimedFrame{timeEstimate, queuedFrame});
+    const Timestamp arrivedAt = std::chrono::steady_clock::now();
+    const Timestamp timeEstimate = recordArrivalLocked(arrivedAt);
+    queue.push_back(TimedFrame{timeEstimate, queuedFrame, arrivedAt});
     pushesSincePop++;
     maxPushBurstStat = std::max(maxPushBurstStat, pushesSincePop);
 
@@ -137,6 +138,13 @@ AVFrame* AVFrameQueue::pop(bool* consumed) {
             draw.averageInterval =
                 (draw.averageInterval * 15 + drawInterval) / 16;
         }
+    }
+
+    // Lowest-latency mode (like Moonlight Android's latency pacing): show the
+    // newest decoded frame at every draw and discard anything older, with no
+    // startup reserve, jitter hold or arrival-rate prediction.
+    if (Settings::instance().lowest_latency_pacing()) {
+        return popNewestLocked(now, consumed);
     }
 
     if (draw.startupBuffering && queue.size() <= targetBufferedFrames) {
@@ -286,6 +294,7 @@ AVFrame* AVFrameQueue::pop(bool* consumed) {
             pacingSkipStat++;
         } else {
             bufferFrame = item.frame;
+            notePresentedLocked(item, now);
         }
     }
 
@@ -297,6 +306,64 @@ AVFrame* AVFrameQueue::pop(bool* consumed) {
     localClockPacedFrameStat++;
 
     return bufferFrame;
+}
+
+void AVFrameQueue::notePresentedLocked(const TimedFrame& item, Timestamp now) {
+    if (item.arrivedAt == Timestamp{}) {
+        return;
+    }
+    const double ageMs =
+        std::chrono::duration<double, std::milli>(now - item.arrivedAt).count();
+    avgPresentedAgeMs = avgPresentedAgeMs == 0.0
+                            ? ageMs
+                            : avgPresentedAgeMs * (15.0 / 16.0) + ageMs / 16.0;
+    maxPresentedAgeMs = std::max(maxPresentedAgeMs, ageMs);
+}
+
+AVFrame* AVFrameQueue::popNewestLocked(Timestamp now, bool* consumed) {
+    // Nothing new since the last draw: keep showing the previous frame.
+    if (queue.empty()) {
+        if (bufferFrame) {
+            fakeFrameUsedStat++;
+            emptyQueueStat++;
+        }
+        return bufferFrame;
+    }
+
+    recycleFrame(freeQueue, bufferFrame);
+    while (queue.size() > 1) {
+        TimedFrame stale = queue.front();
+        queue.pop_front();
+        recycleFrame(freeQueue, stale.frame);
+        framesDroppedStat++;
+        pacingSkipStat++;
+    }
+
+    TimedFrame newest = queue.front();
+    queue.pop_front();
+    bufferFrame = newest.frame;
+    notePresentedLocked(newest, now);
+
+    // Keep the estimator and startup state from carrying over if the user
+    // switches back to the buffered pacing mid-stream.
+    draw.resyncNeeded = true;
+    draw.startupBuffering = false;
+
+    if (consumed) {
+        *consumed = true;
+    }
+    localClockPacedFrameStat++;
+    return bufferFrame;
+}
+
+double AVFrameQueue::getAvgPresentedFrameAgeMs() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return avgPresentedAgeMs;
+}
+
+double AVFrameQueue::getMaxPresentedFrameAgeMs() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return maxPresentedAgeMs;
 }
 
 AVFrame* AVFrameQueue::acquireWriteFrame() {
@@ -419,8 +486,9 @@ bool AVFrameQueue::pushTransferredLocked(AVFrame* item) {
         return false;
     }
 
-    const Timestamp timeEstimate = recordArrivalLocked(std::chrono::steady_clock::now());
-    queue.push_back(TimedFrame{timeEstimate, item});
+    const Timestamp arrivedAt = std::chrono::steady_clock::now();
+    const Timestamp timeEstimate = recordArrivalLocked(arrivedAt);
+    queue.push_back(TimedFrame{timeEstimate, item, arrivedAt});
     pushesSincePop++;
     maxPushBurstStat = std::max(maxPushBurstStat, pushesSincePop);
 
@@ -621,6 +689,8 @@ void AVFrameQueue::cleanup() {
     maxPushBurstStat = 0;
     localClockPacedFrameStat = 0;
     playoutResyncStat = 0;
+    avgPresentedAgeMs = 0.0;
+    maxPresentedAgeMs = 0.0;
     arrival = Arrival{};
     draw = Draw{};
 

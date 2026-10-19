@@ -44,8 +44,11 @@ class OptionsTab : public brls::Box {
   public:
     explicit OptionsTab(StreamingView* streamView);
     ~OptionsTab() override;
+    void draw(NVGcontext* vg, float x, float y, float width, float height,
+              brls::Style style, brls::FrameContext* ctx) override;
 
   private:
+    std::string displayedGyroSource;
     StreamingView* streamView;
 
     static std::string getTextFromButtons(std::vector<brls::ControllerButton> buttons);
@@ -63,6 +66,15 @@ class OptionsTab : public brls::Box {
     BRLS_BIND(brls::Header, rumbleForceHeader, "rumble_slider_header");
     BRLS_BIND(brls::Slider, rumbleForceSlider, "rumble_slider");
     BRLS_BIND(brls::BooleanCell, swapStickToDpad, "swap_stick_to_dpad");
+    BRLS_BIND(brls::BooleanCell, lowestLatencyPacing, "lowest_latency_pacing");
+    BRLS_BIND(brls::BooleanCell, gyroEnabled, "gyro_enabled");
+    BRLS_BIND(brls::SelectorCell, joyconGyro, "joycon_gyro");
+    BRLS_BIND(brls::BooleanCell, joyconPointerMode, "joycon_pointer_mode");
+    BRLS_BIND(brls::BooleanCell, vhfProCompatibility, "vhf_pro_compatibility");
+    BRLS_BIND(brls::Label, vhfProHint, "vhf_pro_hint");
+    BRLS_BIND(brls::DetailCell, gyroSource, "gyro_source");
+    BRLS_BIND(brls::SelectorCell, gyroGain, "gyro_gain");
+    BRLS_BIND(brls::SelectorCell, gyroZeroDrift, "gyro_zero_drift");
     BRLS_BIND(brls::Header, mouseHeader, "mouse_speed_header");
     BRLS_BIND(brls::Slider, mouseSlider, "mouse_speed_slider");
     BRLS_BIND(brls::Header, imageAdjustmentsHeader, "image_adjustments_header");

@@ -8,7 +8,7 @@ if (USE_MBEDTLS_CRYPTO)
     set(USE_MBEDTLS ON)
 endif ()
 
-option(TRACY_ENABLE "" ON)
+option(TRACY_ENABLE "Enable Tracy profiling (off for normal streaming builds)" OFF)
 option(TRACY_NO_FRAME_IMAGE "" ON)
 option(TRACY_DELAYED_INIT "" ON)
 option(TRACY_MANUAL_LIFETIME "" ON)

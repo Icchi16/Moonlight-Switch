@@ -10,12 +10,15 @@
 #endif
 
 #include "settings_tab.hpp"
+#include "GyroSettings.hpp"
 #include "Settings.hpp"
 #include "helper.hpp"
 #include "button_selecting_dialog.hpp"
 #include "mapping_layout_editor.hpp"
 #include "UpscalingSupport.hpp"
+#include <algorithm>
 #include <cmath>
+#include <functional>
 #include <iomanip>
 #include <sstream>
 
@@ -86,6 +89,8 @@ SettingsTab::SettingsTab() {
     // Inflate the tab from the XML file
     this->inflateFromXMLRes("xml/tabs/settings.xml");
 
+    setupGyroSettings(gyroEnabled, joyconGyro, vhfProCompatibility, vhfProHint, gyroSource,
+                      gyroGain, gyroZeroDrift, joyconPointerMode);
     std::vector<std::string> resolutions = {
         "settings/resolution_native"_i18n, "360p", "480p", "540p", "720p", "1080p",
 #if !defined(__PSV__)
@@ -534,6 +539,75 @@ SettingsTab::SettingsTab() {
         return true;
     });
 
+    antiDeadzoneStickLeft->setText("settings/deadzone/anti_stick_left"_i18n);
+    antiDeadzoneStickRight->setText("settings/deadzone/anti_stick_right"_i18n);
+
+    auto openAntiDeadzoneInput = [this](bool left) {
+        const float current = left ? Settings::instance().get_anti_deadzone_stick_left()
+                                   : Settings::instance().get_anti_deadzone_stick_right();
+        const int currentValue = static_cast<int>(std::lround(current * 100.f));
+        bool res = Application::getImeManager()->openForNumber(
+            [this, left](long number) {
+                const float value = std::clamp(float(number) / 100.f, 0.f, 0.5f);
+                if (left)
+                    Settings::instance().set_anti_deadzone_stick_left(value);
+                else
+                    Settings::instance().set_anti_deadzone_stick_right(value);
+                this->updateDeadZoneItems();
+            },
+            left ? "settings/deadzone/anti_stick_left"_i18n : "settings/deadzone/anti_stick_right"_i18n,
+            "settings/deadzone/anti_hint"_i18n, 2,
+            currentValue > 0 ? std::to_string(currentValue) : "", "", "", 0);
+
+        if (!res) {
+            if (left)
+                Settings::instance().set_anti_deadzone_stick_left(0);
+            else
+                Settings::instance().set_anti_deadzone_stick_right(0);
+            this->updateDeadZoneItems();
+        }
+        return true;
+    };
+    antiDeadzoneStickLeft->registerClickAction([openAntiDeadzoneInput](View*) { return openAntiDeadzoneInput(true); });
+    antiDeadzoneStickRight->registerClickAction([openAntiDeadzoneInput](View*) { return openAntiDeadzoneInput(false); });
+    // Stick response: curve strength and outer limit per stick, as percent.
+    auto bindPercentCell = [this](brls::DetailCell* cell, const std::string& title,
+                                  const std::string& hint, int minPercent, int maxPercent,
+                                  std::function<float()> get, std::function<void(float)> set) {
+        cell->setText(title);
+        cell->registerClickAction([this, title, hint, minPercent, maxPercent, get, set](View*) {
+            const int currentValue = static_cast<int>(std::lround(get() * 100.f));
+            bool res = Application::getImeManager()->openForNumber(
+                [this, minPercent, maxPercent, set](long number) {
+                    const long clamped = std::clamp<long>(number, minPercent, maxPercent);
+                    set(static_cast<float>(clamped) / 100.f);
+                    this->updateDeadZoneItems();
+                },
+                title, hint, 3, std::to_string(currentValue), "", "", 0);
+            if (!res) {
+                // Cancelled: restore the neutral value (curve off, outer limit 100%).
+                set(minPercent == 0 ? 0.f : 1.f);
+                this->updateDeadZoneItems();
+            }
+            return true;
+        });
+    };
+    bindPercentCell(stickCurveLeft, "settings/stick/curve_left"_i18n, "settings/stick/curve_hint"_i18n, 0, 100,
+                    [] { return Settings::instance().get_stick_curve_left(); },
+                    [](float v) { Settings::instance().set_stick_curve_left(v); });
+    bindPercentCell(stickCurveRight, "settings/stick/curve_right"_i18n, "settings/stick/curve_hint"_i18n, 0, 100,
+                    [] { return Settings::instance().get_stick_curve_right(); },
+                    [](float v) { Settings::instance().set_stick_curve_right(v); });
+    bindPercentCell(stickOuterLimitLeft, "settings/stick/outer_left"_i18n, "settings/stick/outer_hint"_i18n, 70, 100,
+                    [] { return Settings::instance().get_stick_outer_limit_left(); },
+                    [](float v) { Settings::instance().set_stick_outer_limit_left(v); });
+    bindPercentCell(stickOuterLimitRight, "settings/stick/outer_right"_i18n, "settings/stick/outer_hint"_i18n, 70, 100,
+                    [] { return Settings::instance().get_stick_outer_limit_right(); },
+                    [](float v) { Settings::instance().set_stick_outer_limit_right(v); });
+    stickTuningJoyconOnly->init("settings/stick/joycon_only"_i18n, Settings::instance().stick_tuning_joycon_only(),
+                                [](bool value) { Settings::instance().set_stick_tuning_joycon_only(value); });
+    updateDeadZoneItems();
+
     float rumbleForceProgress = Settings::instance().get_rumble_force();
     rumbleForceSlider->getProgressEvent()->subscribe([this](float value) {
         std::stringstream stream;
@@ -545,6 +619,18 @@ SettingsTab::SettingsTab() {
 
     swapStickToDpad->init("settings/swap_stick_to_dpad"_i18n, Settings::instance().swap_joycon_stick_to_dpad(),
                           [](bool value) { Settings::instance().set_swap_joycon_stick_to_dpad(value); });
+
+    endStreamOnHome->init("settings/end_stream_on_home"_i18n, Settings::instance().end_stream_on_home(),
+                          [](bool value) { Settings::instance().set_end_stream_on_home(value); });
+
+    fastControllerPolling->init("settings/fast_controller_polling"_i18n, Settings::instance().fast_controller_polling(),
+                                [](bool value) { Settings::instance().set_fast_controller_polling(value); });
+
+    lowestLatencyPacing->init("settings/lowest_latency_pacing"_i18n, Settings::instance().lowest_latency_pacing(),
+                              [](bool value) { Settings::instance().set_lowest_latency_pacing(value); });
+
+    lowLatencyAudio->init("settings/low_latency_audio"_i18n, Settings::instance().low_latency_audio(),
+                          [](bool value) { Settings::instance().set_low_latency_audio(value); });
 
     guideKeyButtons->setText("settings/guide_key_buttons"_i18n);
     setupButtonsSelectorCell(guideKeyButtons,
@@ -747,6 +833,18 @@ SettingsTab::SettingsTab() {
                    });
 }
 
+void SettingsTab::draw(NVGcontext* vg, float x, float y, float width, float height,
+                       brls::Style style, brls::FrameContext* ctx) {
+#ifdef __SWITCH__
+    const auto text = gyroSourceText();
+    if (displayedGyroSource != text) {
+        displayedGyroSource = text;
+        gyroSource->setDetailText(text);
+    }
+#endif
+    brls::Box::draw(vg, x, y, width, height, style, ctx);
+}
+
 void SettingsTab::updateDeadZoneItems() {
     if (Settings::instance().get_deadzone_stick_left() > 0) {
         deadzoneStickLeft->setDetailTextColor(Application::getTheme()["brls/list/listItem_value_color"]);
@@ -763,6 +861,45 @@ void SettingsTab::updateDeadZoneItems() {
         deadzoneStickRight->setDetailTextColor(Application::getTheme()["brls/text_disabled"]);
         deadzoneStickRight->setDetailText("hints/off"_i18n);
     }
+
+    auto setAntiText = [](brls::DetailCell* cell, float value) {
+        const int percent = static_cast<int>(std::lround(value * 100.f));
+        if (percent > 0) {
+            cell->setDetailTextColor(Application::getTheme()["brls/list/listItem_value_color"]);
+            cell->setDetailText(fmt::format("{}%", percent));
+        } else {
+            cell->setDetailTextColor(Application::getTheme()["brls/text_disabled"]);
+            cell->setDetailText("hints/off"_i18n);
+        }
+    };
+    setAntiText(antiDeadzoneStickLeft, Settings::instance().get_anti_deadzone_stick_left());
+    setAntiText(antiDeadzoneStickRight, Settings::instance().get_anti_deadzone_stick_right());
+
+    auto setCurveText = [](brls::DetailCell* cell, float value) {
+        const int percent = static_cast<int>(std::lround(value * 100.f));
+        if (percent > 0) {
+            cell->setDetailTextColor(Application::getTheme()["brls/list/listItem_value_color"]);
+            cell->setDetailText(fmt::format("{}% (x^{:.1f})", percent, 1.f + 2.f * value));
+        } else {
+            cell->setDetailTextColor(Application::getTheme()["brls/text_disabled"]);
+            cell->setDetailText("hints/off"_i18n);
+        }
+    };
+    setCurveText(stickCurveLeft, Settings::instance().get_stick_curve_left());
+    setCurveText(stickCurveRight, Settings::instance().get_stick_curve_right());
+
+    auto setOuterText = [](brls::DetailCell* cell, float value) {
+        const int percent = static_cast<int>(std::lround(value * 100.f));
+        if (percent < 100) {
+            cell->setDetailTextColor(Application::getTheme()["brls/list/listItem_value_color"]);
+            cell->setDetailText(fmt::format("{}%", percent));
+        } else {
+            cell->setDetailTextColor(Application::getTheme()["brls/text_disabled"]);
+            cell->setDetailText("hints/off"_i18n);
+        }
+    };
+    setOuterText(stickOuterLimitLeft, Settings::instance().get_stick_outer_limit_left());
+    setOuterText(stickOuterLimitRight, Settings::instance().get_stick_outer_limit_right());
 }
 
 void SettingsTab::setupButtonsSelectorCell(

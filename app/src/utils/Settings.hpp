@@ -256,6 +256,37 @@ class Settings : public Singleton<Settings> {
     void set_swap_joycon_stick_to_dpad(bool value) { m_swap_joycon_stick_to_dpad = value; }
     [[nodiscard]] bool swap_joycon_stick_to_dpad() const { return m_swap_joycon_stick_to_dpad; }
 
+    void set_end_stream_on_home(bool value) { m_end_stream_on_home = value; }
+    [[nodiscard]] bool end_stream_on_home() const { return m_end_stream_on_home; }
+
+    void set_fast_controller_polling(bool value) { m_fast_controller_polling = value; }
+    [[nodiscard]] bool fast_controller_polling() const { return m_fast_controller_polling; }
+
+    void set_lowest_latency_pacing(bool value) { m_lowest_latency_pacing = value; }
+    [[nodiscard]] bool lowest_latency_pacing() const { return m_lowest_latency_pacing; }
+
+    void set_low_latency_audio(bool value) { m_low_latency_audio = value; }
+    [[nodiscard]] bool low_latency_audio() const { return m_low_latency_audio; }
+
+    void set_gyro_enabled(bool enabled) { m_gyro_enabled = enabled; }
+    [[nodiscard]] bool gyro_enabled() const { return m_gyro_enabled; }
+    void set_joycon_gyro_right(bool right) { m_joycon_gyro_right = right; }
+    [[nodiscard]] bool joycon_gyro_right() const { return m_joycon_gyro_right; }
+    void set_vhf_pro_compatibility(bool enabled) { m_vhf_pro_compatibility = enabled; }
+    [[nodiscard]] bool vhf_pro_compatibility() const { return m_vhf_pro_compatibility; }
+
+    // Gyro multiplier 0.5..3.0 applied before sending; 1.0 = unchanged.
+    void set_gyro_gain(float gain) { m_gyro_gain = gain; }
+    [[nodiscard]] float gyro_gain() const { return m_gyro_gain; }
+
+    // HidGyroscopeZeroDriftMode: 0 Loose, 1 Standard (system default), 2 Tight.
+    void set_gyro_zero_drift(int mode) { m_gyro_zero_drift = mode; }
+    [[nodiscard]] int gyro_zero_drift() const { return m_gyro_zero_drift; }
+
+    // Wii-remote style gyro aiming for a detached Joy-Con pair only.
+    void set_joycon_pointer_mode(bool enabled) { m_joycon_pointer_mode = enabled; }
+    [[nodiscard]] bool joycon_pointer_mode() const { return m_joycon_pointer_mode; }
+
     void set_swap_mouse_keys(bool swap_mouse_keys) { m_swap_mouse_keys = swap_mouse_keys; }
     [[nodiscard]] bool touchscreen_mouse_mode() const { return m_touchscreen_mouse_mode; }
 
@@ -316,6 +347,34 @@ class Settings : public Singleton<Settings> {
     void set_deadzone_stick_right(float deadzone) { m_deadzone_stick_right = deadzone; }
     [[nodiscard]] float get_deadzone_stick_right() const { return m_deadzone_stick_right; }
 
+    // Minimum output once a stick leaves its dead zone (0..0.5), to skip the
+    // game's own in-game dead zone.
+    void set_anti_deadzone_stick_left(float value) { m_anti_deadzone_stick_left = value; }
+    [[nodiscard]] float get_anti_deadzone_stick_left() const { return m_anti_deadzone_stick_left; }
+
+    void set_anti_deadzone_stick_right(float value) { m_anti_deadzone_stick_right = value; }
+    [[nodiscard]] float get_anti_deadzone_stick_right() const { return m_anti_deadzone_stick_right; }
+
+    // Response curve strength 0..1 (0 = linear). Output = travel^(1 + 2*strength)
+    // after the dead zone, so the stick is gentle near the centre and ramps up
+    // towards the rim.
+    void set_stick_curve_left(float value) { m_stick_curve_left = value; }
+    [[nodiscard]] float get_stick_curve_left() const { return m_stick_curve_left; }
+    void set_stick_curve_right(float value) { m_stick_curve_right = value; }
+    [[nodiscard]] float get_stick_curve_right() const { return m_stick_curve_right; }
+
+    // Travel (0.7..1) at which the stick counts as fully pushed. Joy-Con sticks
+    // often cannot reach 1.0, so lowering this lets them hit full output.
+    void set_stick_outer_limit_left(float value) { m_stick_outer_limit_left = value; }
+    [[nodiscard]] float get_stick_outer_limit_left() const { return m_stick_outer_limit_left; }
+    void set_stick_outer_limit_right(float value) { m_stick_outer_limit_right = value; }
+    [[nodiscard]] float get_stick_outer_limit_right() const { return m_stick_outer_limit_right; }
+
+    // Apply the curve and outer limit only to Joy-Con class sticks, so a Pro
+    // Controller or third-party pad keeps its linear response.
+    void set_stick_tuning_joycon_only(bool value) { m_stick_tuning_joycon_only = value; }
+    [[nodiscard]] bool stick_tuning_joycon_only() const { return m_stick_tuning_joycon_only; }
+
     int get_current_mapping_layout();
     void set_current_mapping_layout(int layout) { m_current_mapping_layout = layout; }
 
@@ -361,6 +420,16 @@ class Settings : public Singleton<Settings> {
     bool m_write_log = false;
     bool m_swap_ui_keys = false;
     bool m_swap_joycon_stick_to_dpad = false;
+    bool m_end_stream_on_home = false;
+    bool m_fast_controller_polling = true;
+    bool m_lowest_latency_pacing = false;
+    bool m_low_latency_audio = false;
+    bool m_gyro_enabled = true;
+    bool m_joycon_gyro_right = true;
+    bool m_vhf_pro_compatibility = false;
+    float m_gyro_gain = 1.f;
+    int m_gyro_zero_drift = 1;
+    bool m_joycon_pointer_mode = false;
     bool m_touchscreen_mouse_mode = false;
     bool m_swap_mouse_keys = false;
     bool m_swap_mouse_scroll = false;
@@ -392,6 +461,13 @@ class Settings : public Singleton<Settings> {
 
     float m_deadzone_stick_left = 0;
     float m_deadzone_stick_right = 0;
+    float m_anti_deadzone_stick_left = 0;
+    float m_anti_deadzone_stick_right = 0;
+    float m_stick_curve_left = 0;
+    float m_stick_curve_right = 0;
+    float m_stick_outer_limit_left = 1.f;
+    float m_stick_outer_limit_right = 1.f;
+    bool m_stick_tuning_joycon_only = true;
 
     void loadBaseLayouts();
 };

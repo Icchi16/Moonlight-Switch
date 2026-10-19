@@ -88,7 +88,23 @@
                 
             <brls:BooleanCell
                 id="volume_amplification"/>
-                
+
+            <brls:BooleanCell
+                id="low_latency_audio"/>
+
+            <brls:Header
+                title="@i18n/settings/latency_title"
+                paddingTop="60"/>
+
+            <brls:BooleanCell
+                id="lowest_latency_pacing"/>
+
+            <brls:BooleanCell
+                id="fast_controller_polling"/>
+
+            <brls:BooleanCell
+                id="end_stream_on_home"/>
+
             <brls:Header
                 title="@i18n/settings/keys"
                 paddingTop="60"/>
@@ -109,6 +125,37 @@
             <brls:DetailCell
                     id="dead_zone_stick_right"/>
 
+            <brls:DetailCell
+                    id="anti_dead_zone_stick_left"/>
+
+            <brls:DetailCell
+                    id="anti_dead_zone_stick_right"/>
+
+            <brls:Label text="@i18n/settings/deadzone/anti_note"
+                width="auto" height="auto" fontSize="18" marginTop="8" marginBottom="12"/>
+
+            <brls:Header
+                title="@i18n/settings/stick/title"
+                paddingTop="60"/>
+
+            <brls:DetailCell
+                    id="stick_curve_left"/>
+
+            <brls:DetailCell
+                    id="stick_curve_right"/>
+
+            <brls:DetailCell
+                    id="stick_outer_limit_left"/>
+
+            <brls:DetailCell
+                    id="stick_outer_limit_right"/>
+
+            <brls:BooleanCell
+                id="stick_tuning_joycon_only"/>
+
+            <brls:Label text="@i18n/settings/stick/note"
+                width="auto" height="auto" fontSize="18" marginTop="8" marginBottom="12"/>
+
             <brls:Header
                 id="rumble_slider_header"
                 title="@i18n/settings/rumble_force"
@@ -120,6 +167,21 @@
                 width="auto"
                 height="84"
                 grow="1"/>
+
+            <brls:Header
+                title="@i18n/settings/gyro_title"
+                paddingTop="60"
+                lineTop="1px"/>
+
+            <brls:BooleanCell id="gyro_enabled"/>
+            <brls:SelectorCell id="joycon_gyro"/>
+            <brls:BooleanCell id="joycon_pointer_mode"/>
+            <brls:BooleanCell id="vhf_pro_compatibility"/>
+            <brls:Label id="vhf_pro_hint" text="@i18n/settings/vhf_pro_compatibility_hint"
+                width="auto" height="auto" fontSize="18" marginBottom="12"/>
+            <brls:DetailCell id="gyro_source"/>
+            <brls:SelectorCell id="gyro_gain"/>
+            <brls:SelectorCell id="gyro_zero_drift"/>
 
             <brls:Header
                 title="@i18n/settings/single_joycon"

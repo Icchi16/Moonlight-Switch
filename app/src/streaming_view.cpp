@@ -12,6 +12,7 @@
 #include "streaming_view.hpp"
 #include "AVFrameHolder.hpp"
 #include "InputManager.hpp"
+#include "switch/SwitchMotion.hpp"
 #include "click_gesture_recognizer.hpp"
 #include "helper.hpp"
 #include "ingame_overlay_view.hpp"
@@ -241,11 +242,13 @@ StreamingView::StreamingView(const Host& host, const AppInfo& app) : host(host),
                 }
             });
 
-    // End the stream when the console suspends, the way Moonlight on Android
-    // does. See the comment on onWindowFocusChanged in the header.
+    // Pause input while HOME or sleep takes focus. See the comment on
+    // onWindowFocusChanged in the header.
     windowFocusSubscription =
         Application::getWindowFocusChangedEvent()->subscribe(
             [this](bool focused) { this->onWindowFocusChanged(focused); });
+
+    MoonlightInputManager::instance().startControllerPoller();
 }
 
 void StreamingView::onFocusGained() {
@@ -315,9 +318,20 @@ void StreamingView::draw(NVGcontext* vg, float x, float y, float width,
         return;
     }
 
-    session->draw(vg, (int) width, (int) height);
+#if defined(PLATFORM_SWITCH) && defined(BOREALIS_USE_DEKO3D)
+    // View dimensions are UI coordinates (normally 1280x720 even when docked).
+    // deko3d render targets and viewports need the actual framebuffer pixels,
+    // including when FSR/RCAS/dithering explicitly set the present viewport.
+    const int presentWidth = Application::windowWidth > 0
+                                 ? Application::windowWidth : (int)width;
+    const int presentHeight = Application::windowHeight > 0
+                                  ? Application::windowHeight : (int)height;
+    session->draw(vg, presentWidth, presentHeight);
+#else
+    session->draw(vg, (int)width, (int)height);
+#endif
 
-    if (!tempInputLock && session->is_active())
+    if (!tempInputLock && appletFocused && session->is_active())
         handleInput();
     handleOverlayCombo();
     handleMouseInputCombo();
@@ -389,6 +403,30 @@ void StreamingView::draw(NVGcontext* vg, float x, float y, float width,
                 /*stats->video_render_stats.rendered_frames*/);
         }
 
+        statistics += fmt::format("Pacing: {} | frame age at present avg | max: {:.1f} | {:.1f} ms\n",
+                                  Settings::instance().lowest_latency_pacing()
+                                      ? "lowest latency" : "buffered (alpha-beta)",
+                                  AVFrameHolder::instance().getAvgPresentedFrameAgeMs(),
+                                  AVFrameHolder::instance().getMaxPresentedFrameAgeMs());
+
+        statistics += fmt::format("Stick peak travel L | R (player 1, {}): {:.2f} | {:.2f} (push each stick fully round to calibrate the outer limit)\n",
+                                  MoonlightInputManager::instance().player1HasSmallSticks()
+                                      ? "Joy-Con" : "Pro/other",
+                                  MoonlightInputManager::instance().peakStickLeft(),
+                                  MoonlightInputManager::instance().peakStickRight());
+
+#ifdef __SWITCH__
+        {
+            static constexpr const char* kDriftModes[] = {"Loose", "Standard", "Tight"};
+            const auto& motion = moonvibe::SwitchMotion::instance();
+            statistics += fmt::format(
+                "Gyro P1 angle pitch | yaw | roll: {:.1f} | {:.1f} | {:.1f} deg, peak {:.0f} deg/s (gain {:.1f}x, zero drift {})\n",
+                motion.measuredAngle(0), motion.measuredAngle(1), motion.measuredAngle(2),
+                motion.measuredPeakRate(), motion.gyroGain(),
+                kDriftModes[std::clamp(motion.zeroDriftMode(), 0, 2)]);
+        }
+#endif
+
         statistics += fmt::format("Frames queue underflows | skipped: {} | {}\n"
                                   "Queue empty | startup holds: {} | {}\n"
                                   "Queue overflow | paced skips: {} | {}\n"
@@ -448,21 +486,40 @@ void StreamingView::removeKeyboard() {
 }
 
 void StreamingView::onWindowFocusChanged(bool focused) {
-    if (focused || terminated)
+    if (terminated)
         return;
 
-    // Losing focus on Switch means the console is going to sleep or the HOME
-    // menu has taken over. Moonlight on Android ends the session at the
-    // equivalent point (Game.onStop calls stopConnection then finish), and
-    // this matches it: end the stream and fall back to the host list rather
-    // than carrying decoder and GPU state across a suspend.
-    //
+    if (focused) {
+        if (appletFocused)
+            return;
+        Logger::info("StreamingView: focus regained, resuming input");
+        appletFocused = true;
+        // Don't forward the button press that closed the HOME menu.
+        tempInputLock = true;
+        ASYNC_RETAIN
+        delay(300, [ASYNC_TOKEN]() {
+            ASYNC_RELEASE
+            this->tempInputLock = false;
+        });
+        return;
+    }
+
+    // Losing focus on Switch means the HOME menu has taken over or the
+    // console is going to sleep. Release everything held on the host and stop
+    // sending input until focus returns.
+    appletFocused = false;
+    MoonlightInputManager::instance().dropInput();
+
+    if (!Settings::instance().end_stream_on_home()) {
+        Logger::info("StreamingView: focus lost, keeping the stream");
+        return;
+    }
+
     // Nothing destructive happens here. This runs inside
     // Event<bool>::fire, which is iterating its own callback list, and
     // terminate() would dismiss this view and unsubscribe from inside that
     // iteration. Record the intent; draw() acts on it.
     Logger::info("StreamingView: focus lost, will end the stream");
-    MoonlightInputManager::instance().dropInput();
     pendingSuspendTerminate = true;
 }
 
@@ -472,6 +529,7 @@ void StreamingView::terminate(bool terminateApp) {
         return;
     terminated = true;
 
+    MoonlightInputManager::instance().stopControllerPoller();
     session->stop(terminateApp);
 
     int controllersCount = Application::getPlatform()->getInputManager()->getControllersConnectedCount();
@@ -636,6 +694,7 @@ StreamingView::~StreamingView() {
     updatePreferredDisplayMode(false);
 #endif
 
+    MoonlightInputManager::instance().stopControllerPoller();
     Application::getPlatform()->disableScreenDimming(false);
     Application::getPlatform()
         ->getInputManager()

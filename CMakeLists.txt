@@ -173,6 +173,7 @@ unset(_moonlight_vcpkg_triplet_dir)
 
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 add_subdirectory(extern)
+include(cmake/MoonvibeMotion.cmake)
 if ((PLATFORM_IOS OR PLATFORM_VISIONOS) AND TARGET borealis)
     get_target_property(_borealis_interface_options borealis INTERFACE_COMPILE_OPTIONS)
     if (_borealis_interface_options)

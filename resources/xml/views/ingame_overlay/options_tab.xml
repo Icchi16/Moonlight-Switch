@@ -34,6 +34,16 @@
             <brls:BooleanCell
                 id="touchscreen_mouse_mode"/>
 
+            <brls:BooleanCell id="gyro_enabled"/>
+            <brls:SelectorCell id="joycon_gyro"/>
+            <brls:BooleanCell id="joycon_pointer_mode"/>
+            <brls:BooleanCell id="vhf_pro_compatibility"/>
+            <brls:Label id="vhf_pro_hint" text="@i18n/settings/vhf_pro_compatibility_hint"
+                width="auto" height="auto" fontSize="18" marginBottom="12"/>
+            <brls:DetailCell id="gyro_source"/>
+            <brls:SelectorCell id="gyro_gain"/>
+            <brls:SelectorCell id="gyro_zero_drift"/>
+
             <brls:Header
                 title="@i18n/settings/guide_key"
                 paddingTop="60"/>
@@ -74,6 +84,9 @@
 
             <brls:BooleanCell
                     id="swap_stick_to_dpad"/>
+
+            <brls:BooleanCell
+                    id="lowest_latency_pacing"/>
         
             <brls:Header
                 id="mouse_speed_header"

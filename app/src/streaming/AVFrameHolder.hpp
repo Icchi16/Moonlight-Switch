@@ -19,6 +19,7 @@ using Duration = std::chrono::nanoseconds;
 struct TimedFrame {
     Timestamp timeEstimate;
     AVFrame* frame;
+    Timestamp arrivedAt{};  // raw (unsmoothed) decode-complete time
 };
 
 class AVFrameQueue {
@@ -50,6 +51,10 @@ public:
     [[nodiscard]] size_t getPlayoutResyncStat() const;
     [[nodiscard]] double getEstimatedSourceFps() const;
     [[nodiscard]] double getJitterMs() const;
+    /// Age of the frame being shown, measured from decode completion to the
+    /// moment pop() hands it to the renderer (excludes render and scanout).
+    [[nodiscard]] double getAvgPresentedFrameAgeMs() const;
+    [[nodiscard]] double getMaxPresentedFrameAgeMs() const;
 
     void cleanup();
 
@@ -117,6 +122,10 @@ private:
     size_t maxPushBurstStat = 0;
     size_t localClockPacedFrameStat = 0;
     size_t playoutResyncStat = 0;
+    double avgPresentedAgeMs = 0.0;
+    double maxPresentedAgeMs = 0.0;
+    void notePresentedLocked(const TimedFrame& item, Timestamp now);
+    AVFrame* popNewestLocked(Timestamp now, bool* consumed);
 };
 
 class AVFrameHolder : public Singleton<AVFrameHolder> {
@@ -169,6 +178,8 @@ class AVFrameHolder : public Singleton<AVFrameHolder> {
     [[nodiscard]] size_t getFrameQueuePlayoutResyncStat() const { return m_frame_queue.getPlayoutResyncStat(); }
     [[nodiscard]] double getFrameQueueEstimatedSourceFps() const { return m_frame_queue.getEstimatedSourceFps(); }
     [[nodiscard]] double getFrameQueueJitterMs() const { return m_frame_queue.getJitterMs(); }
+    [[nodiscard]] double getAvgPresentedFrameAgeMs() const { return m_frame_queue.getAvgPresentedFrameAgeMs(); }
+    [[nodiscard]] double getMaxPresentedFrameAgeMs() const { return m_frame_queue.getMaxPresentedFrameAgeMs(); }
 
   private:
     AVFrameQueue m_frame_queue;

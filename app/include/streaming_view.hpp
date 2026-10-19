@@ -32,24 +32,24 @@ class StreamingView : public brls::Box {
 
   private:
     /**
-     * Ends the stream when the console suspends, matching Moonlight on
-     * Android.
+     * Handles applet focus changes (HOME menu, console sleep).
      *
-     * There, Game.onStop() calls stopConnection() and then finish(), so
-     * putting the phone to sleep mid stream ends the session and returns you
-     * to the host list. This does the same on losing applet focus, which on
-     * Switch means the console sleeping or the HOME menu taking over.
+     * By default the stream stays connected, like XITRIX/Moonlight-Switch:
+     * held input is released and no input is sent until focus returns. The
+     * app runs with AppletFocusHandlingMode_NoSuspend, so decoding continues
+     * in the background. If sleep drops the network, the connection listener
+     * ends the stream as for any other disconnect.
      *
-     * The alternative is keeping the session alive across the suspend, which
-     * means preserving decoder and GPU state through a window where the OS
-     * tears those services down underneath a process that keeps running. That
-     * is where issue #306 lives. Ending the stream removes the state instead
-     * of trying to repair it: there is nothing stale left to get wrong.
-     *
-     * The cost is one reconnect after waking, which is exactly the Android
-     * behaviour.
+     * The "end stream on HOME" setting restores the frame-rate-sync behaviour
+     * of ending the session on focus loss, matching Moonlight on Android
+     * (Game.onStop calls stopConnection and finish). That avoids carrying
+     * decoder and GPU state across a suspend (issue #306) at the cost of a
+     * reconnect.
      */
     void onWindowFocusChanged(bool focused);
+
+    /** False while the HOME menu or sleep owns applet focus. */
+    bool appletFocused = true;
 
     brls::Event<bool>::Subscription windowFocusSubscription;
 
